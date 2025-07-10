@@ -97,47 +97,45 @@ def actualizar_dropdown():
     return gr.update(choices=doc_ids, value=None)
 
 def procesar_pdf_gradio(pdf_file):
-    print(f"procesar_pdf_gradio recibió: {pdf_file}")
-    # resto de la función
-    # try:
-    #     with open(pdf_file, "rb") as f:
-    #         file_bytes = f.read()
-    #     text = extract_text_from_pdf(file_bytes)
-    # except Exception as e:
-    #     return f"Error al procesar el PDF: {e}"
+    try:
+        with open(pdf_file, "rb") as f:
+            file_bytes = f.read()
+        text = extract_text_from_pdf(file_bytes)
+    except Exception as e:
+        return f"Error al procesar el PDF: {e}"
 
-    # chunks = chunk_text(text)
-    # vectors = get_embeddings(chunks)
+    chunks = chunk_text(text)
+    vectors = get_embeddings(chunks)
 
-    # if not es.indices.exists(index=index_name):
-    #     es.indices.create(
-    #         index=index_name,
-    #         body={
-    #             "mappings": {
-    #                 "properties": {
-    #                     "doc_id": {"type": "keyword"},
-    #                     "original_text": {"type": "text"},
-    #                     "embedding": {
-    #                         "type": "dense_vector",
-    #                         "dims": 512,
-    #                         "index": True,
-    #                         "similarity": "cosine"
-    #                     }
-    #                 }
-    #             }
-    #         }
-    #     )
+    if not es.indices.exists(index=index_name):
+        es.indices.create(
+            index=index_name,
+            body={
+                "mappings": {
+                    "properties": {
+                        "doc_id": {"type": "keyword"},
+                        "original_text": {"type": "text"},
+                        "embedding": {
+                            "type": "dense_vector",
+                            "dims": 512,
+                            "index": True,
+                            "similarity": "cosine"
+                        }
+                    }
+                }
+            }
+        )
 
-    # doc_id_actual = os.path.basename(pdf_file)
-    # for chunk, vector in zip(chunks, vectors):
-    #     doc = {
-    #         "doc_id": doc_id_actual,
-    #         "original_text": chunk,
-    #         "embedding": vector.tolist()
-    #     }
-    #     es.index(index=index_name, document=doc)
+    doc_id_actual = os.path.basename(pdf_file)
+    for chunk, vector in zip(chunks, vectors):
+        doc = {
+            "doc_id": doc_id_actual,
+            "original_text": chunk,
+            "embedding": vector.tolist()
+        }
+        es.index(index=index_name, document=doc)
 
-    # return f"PDF procesado exitosamente. {len(chunks)} fragmentos indexados."
+    return f"PDF procesado exitosamente. {len(chunks)} fragmentos indexados."
 
 def responder_pregunta(user_input, selected_doc_id):
     query_vector = get_embedding(user_input)
@@ -187,7 +185,7 @@ with gr.Blocks() as demo:
     gr.Markdown("### 🧠 Subí un PDF y preguntá sobre su contenido")
 
     with gr.Row():
-        upload = gr.File(label="📄 Subí un PDF", file_types=[".pdf"], type="binary")
+        upload = gr.File(label="📄 Subí un PDF", file_types=[".pdf"])
         upload_btn = gr.Button("Procesar PDF")
 
     status = gr.Textbox(label="Estado", interactive=False)
