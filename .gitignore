@@ -1,0 +1,51 @@
+# Entorno virtual
+venv/
+.env/
+.env
+
+# Archivos de configuración local
+*.env
+*.local
+*.log
+
+# Archivos Python compilados
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Archivos de Jupyter
+.ipynb_checkpoints
+
+# Archivos temporales o de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de cache
+*.cache
+*.sqlite3
+*.db
+
+# Archivos de Hugging Face no necesarios
+*.safetensors
+*.pt
+*.pkl
+*.h5
+*.ckpt
+*.onnx
+
+# Git LFS (si usás)
+*.zip
+*.tar.gz
+
+# IDEs
+.vscode/
+.idea/
+
+# Node (si usás JS/TS para algo del frontend)
+node_modules/
+
+# Otros binarios grandes
+*.exe
+*.dll
+*.so
+*.dylib

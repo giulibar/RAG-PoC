@@ -1,1 +1,8 @@
 huggingface_hub==0.25.2
+gradio
+pymupdf
+spacy
+tensorflow
+tensorflow-hub
+elasticsearch
+together
