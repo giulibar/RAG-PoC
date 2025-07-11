@@ -1,4 +1,4 @@
-"""# Interfaz con Gradio"""
+"""# Gradio Interface"""
 
 import gradio as gr
 import fitz
@@ -10,8 +10,9 @@ from together import Together
 from dotenv import load_dotenv
 import subprocess
 import sys
+import uuid
 
-# Intenta cargar el modelo, y si no está, lo descarga
+# Load the NLP model, download if not present
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
@@ -20,30 +21,28 @@ except OSError:
 
 use_model = hub.load("https://tfhub.dev/google/universal-sentence-encoder/4")
 
-# Credenciales (desde entorno seguro)
-load_dotenv()  # Esto carga las variables del archivo .env
+# Load environment credentials
+load_dotenv()
 
 CLOUD_ID = os.getenv("CLOUD_ID")
 ELASTIC_USER = os.getenv("ELASTIC_USER")
 ELASTIC_PASSWORD = os.getenv("ELASTIC_PASSWORD")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 
-
-
-# Conexión a Elasticsearch
+# Elasticsearch connection
 es = Elasticsearch(
     cloud_id=CLOUD_ID,
     http_compress=True,
     basic_auth=(ELASTIC_USER, ELASTIC_PASSWORD),
 )
 
-# Cliente de Together AI
+# Together AI client
 client = Together(api_key=TOGETHER_API_KEY)
 
-# Nombre del índice
+# Index name
 index_name = "document_chunks"
 
-# Funciones auxiliares
+# Helper functions
 def extract_text_from_pdf(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     return "".join(page.get_text() for page in doc)
@@ -73,7 +72,7 @@ def get_embeddings(text_chunks):
 def get_embedding(text):
     return use_model([text])[0].numpy()
 
-def obtener_doc_ids():
+def get_doc_ids():
     try:
         response = es.search(
             index=index_name,
@@ -81,7 +80,7 @@ def obtener_doc_ids():
             aggs={
                 "doc_ids": {
                     "terms": {
-                        "field": "doc_id.keyword",
+                        "field": "doc_id",
                         "size": 100
                     }
                 }
@@ -89,24 +88,35 @@ def obtener_doc_ids():
         )
         return [bucket["key"] for bucket in response["aggregations"]["doc_ids"]["buckets"]]
     except Exception as e:
-        print("Error obteniendo doc_ids:", e)
+        print("Error retrieving doc_ids:", e)
         return []
 
-def actualizar_dropdown():
-    doc_ids = obtener_doc_ids()
+def update_dropdown():
+    doc_ids = get_doc_ids()
+    print("Retrieved doc IDs:", doc_ids)  # Debug
+    if not doc_ids:
+        doc_ids = ["No documents indexed"]
     return gr.update(choices=doc_ids, value=None)
 
-def procesar_pdf_gradio(pdf_file):
+import os  # Asegurate de tener esto importado arriba
+
+def process_pdf_gradio(pdf_file_path):
     try:
-        with open(pdf_file, "rb") as f:
+        if not pdf_file_path:
+            return "No file uploaded"
+        
+        with open(pdf_file_path, "rb") as f:
             file_bytes = f.read()
+
         text = extract_text_from_pdf(file_bytes)
+
     except Exception as e:
-        return f"Error al procesar el PDF: {e}"
+        return f"Error processing PDF: {e}"
 
     chunks = chunk_text(text)
     vectors = get_embeddings(chunks)
 
+    # Create index if it doesn't exist
     if not es.indices.exists(index=index_name):
         es.indices.create(
             index=index_name,
@@ -126,7 +136,9 @@ def procesar_pdf_gradio(pdf_file):
             }
         )
 
-    doc_id_actual = os.path.basename(pdf_file)
+    # Use the filename (without extension) as doc_id
+    doc_id_actual = os.path.splitext(os.path.basename(pdf_file_path))[0]
+
     for chunk, vector in zip(chunks, vectors):
         doc = {
             "doc_id": doc_id_actual,
@@ -135,11 +147,12 @@ def procesar_pdf_gradio(pdf_file):
         }
         es.index(index=index_name, document=doc)
 
-    return f"PDF procesado exitosamente. {len(chunks)} fragmentos indexados."
+    return f"PDF processed successfully. {len(chunks)} chunks indexed with ID '{doc_id_actual}'."
 
-def responder_pregunta(user_input, selected_doc_id):
+
+def answer_question(user_input, selected_doc_id):
     query_vector = get_embedding(user_input)
-    print("Vector de la consulta:", selected_doc_id)
+    print("Query vector for doc ID:", selected_doc_id)
 
     response = es.search(
         index=index_name,
@@ -149,26 +162,25 @@ def responder_pregunta(user_input, selected_doc_id):
             "k": 5,
             "num_candidates": 10,
             "filter": [
-                {"term": {"doc_id.keyword": selected_doc_id}}
+                {"term": {"doc_id": selected_doc_id}}
             ]
         },
         _source=["original_text", "doc_id"]
     )
 
-
     top_chunks = [hit["_source"]["original_text"] for hit in response["hits"]["hits"]]
     context = "\n\n".join(top_chunks)
 
     final_prompt = f"""
-Usá el siguiente contexto extraído de un documento para responder la pregunta del usuario de forma clara, completa y profesional. Si no hay suficiente información en el contexto, decilo explícitamente.
+Use the following document context to answer the user's question clearly, thoroughly, and professionally. If the context doesn't provide enough information, say so explicitly.
 
-### CONTEXTO DEL DOCUMENTO:
+### DOCUMENT CONTEXT:
 {context}
 
-### PREGUNTA:
+### QUESTION:
 {user_input}
 
-### RESPUESTA:
+### ANSWER:
 """
 
     response_final = client.chat.completions.create(
@@ -180,29 +192,27 @@ Usá el siguiente contexto extraído de un documento para responder la pregunta 
 
     return response_final.choices[0].message.content
 
-# Interfaz de usuario Gradio
+# Gradio user interface
 with gr.Blocks() as demo:
-    gr.Markdown("### 🧠 Subí un PDF y preguntá sobre su contenido")
+    gr.Markdown("### 🧠 Upload a PDF and ask questions about its content")
 
     with gr.Row():
-        upload = gr.File(label="📄 Subí un PDF", file_types=[".pdf"])
-        upload_btn = gr.Button("Procesar PDF")
+        upload = gr.File(label="📄 Upload a PDF", file_types=[".pdf"], type="filepath")
+        upload_btn = gr.Button("Process PDF")
 
-    status = gr.Textbox(label="Estado", interactive=False)
+    status = gr.Textbox(label="Status", interactive=False)
 
     with gr.Row():
-        doc_id_dropdown = gr.Dropdown(label="Seleccioná un documento", choices=[])
-        refresh_btn = gr.Button("🔄 Recargar lista")
+        doc_id_dropdown = gr.Dropdown(label="Select a document", choices=[])
+        refresh_btn = gr.Button("🔄 Refresh list")
 
-    user_input = gr.Textbox(label="Pregunta")
-    answer = gr.Textbox(label="Respuesta generada", lines=10)
-    ask_btn = gr.Button("Preguntar")
+    user_input = gr.Textbox(label="Your question")
+    answer = gr.Textbox(label="Generated answer", lines=10)
+    ask_btn = gr.Button("Ask")
 
-    # Vinculaciones de eventos
-    refresh_btn.click(fn=actualizar_dropdown, inputs=[], outputs=[doc_id_dropdown])
-
-    upload_btn.click(fn=procesar_pdf_gradio, inputs=[upload], outputs=[status])
-
-    # ask_btn.click(fn=responder_pregunta, inputs=[user_input, doc_id_dropdown], outputs=[answer])
+    # Event bindings
+    refresh_btn.click(fn=update_dropdown, inputs=[], outputs=[doc_id_dropdown])
+    upload_btn.click(fn=process_pdf_gradio, inputs=[upload], outputs=[status])
+    ask_btn.click(fn=answer_question, inputs=[user_input, doc_id_dropdown], outputs=[answer])
 
 demo.launch(debug=True, share=True)
