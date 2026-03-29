@@ -4,6 +4,6 @@ spacy
 tensorflow
 tensorflow-hub
 elasticsearch
-together
+groq
 python-dotenv
 pydantic==2.10.6

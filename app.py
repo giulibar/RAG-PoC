@@ -1,33 +1,29 @@
-"""# Gradio Interface"""
-
 import gradio as gr
 import fitz
 import os
 import spacy
 import tensorflow_hub as hub
 from elasticsearch import Elasticsearch
-from together import Together
-from dotenv import load_dotenv
+from groq import Groq
 import subprocess
 import sys
-import uuid
 
-# Load the NLP model, download if not present
+# Load spaCy model, download if not present
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError:
     subprocess.check_call([sys.executable, "-m", "spacy", "download", "en_core_web_sm"])
     nlp = spacy.load("en_core_web_sm")
 
+    
+# Load USE model
 use_model = hub.load("https://tfhub.dev/google/universal-sentence-encoder/4")
 
-# Load environment credentials
-load_dotenv()
-
+# Load credentials from HF Secrets (Settings → Variables and Secrets in your Space)
 CLOUD_ID = os.getenv("CLOUD_ID")
 ELASTIC_USER = os.getenv("ELASTIC_USER")
 ELASTIC_PASSWORD = os.getenv("ELASTIC_PASSWORD")
-TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Elasticsearch connection
 es = Elasticsearch(
@@ -36,13 +32,15 @@ es = Elasticsearch(
     basic_auth=(ELASTIC_USER, ELASTIC_PASSWORD),
 )
 
-# Together AI client
-client = Together(api_key=TOGETHER_API_KEY)
+# Groq client
+client = Groq(api_key=GROQ_API_KEY)
 
 # Index name
 index_name = "document_chunks"
 
-# Helper functions
+
+# ── Helper functions ───────────────────────────────────────────────────────────
+
 def extract_text_from_pdf(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     return "".join(page.get_text() for page in doc)
@@ -93,18 +91,15 @@ def get_doc_ids():
 
 def update_dropdown():
     doc_ids = get_doc_ids()
-    print("Retrieved doc IDs:", doc_ids)  # Debug
     if not doc_ids:
         doc_ids = ["No documents indexed"]
     return gr.update(choices=doc_ids, value=None)
 
-import os  # Asegurate de tener esto importado arriba
-
 def process_pdf_gradio(pdf_file_path):
     try:
         if not pdf_file_path:
-            return "No file uploaded"
-        
+            return "No file uploaded."
+
         with open(pdf_file_path, "rb") as f:
             file_bytes = f.read()
 
@@ -136,7 +131,6 @@ def process_pdf_gradio(pdf_file_path):
             }
         )
 
-    # Use the filename (without extension) as doc_id
     doc_id_actual = os.path.splitext(os.path.basename(pdf_file_path))[0]
 
     for chunk, vector in zip(chunks, vectors):
@@ -149,10 +143,13 @@ def process_pdf_gradio(pdf_file_path):
 
     return f"PDF processed successfully. {len(chunks)} chunks indexed with ID '{doc_id_actual}'."
 
-
 def answer_question(user_input, selected_doc_id):
+    if not selected_doc_id or selected_doc_id == "No documents indexed":
+        return "Please select a document first."
+    if not user_input.strip():
+        return "Please enter a question."
+
     query_vector = get_embedding(user_input)
-    print("Query vector for doc ID:", selected_doc_id)
 
     response = es.search(
         index=index_name,
@@ -184,7 +181,7 @@ Use the following document context to answer the user's question clearly, thorou
 """
 
     response_final = client.chat.completions.create(
-        model="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+        model="llama-3.1-8b-instant",
         messages=[
             {"role": "user", "content": final_prompt}
         ]
@@ -192,7 +189,9 @@ Use the following document context to answer the user's question clearly, thorou
 
     return response_final.choices[0].message.content
 
-# Gradio user interface
+
+# ── Gradio UI ──────────────────────────────────────────────────────────────────
+
 with gr.Blocks() as demo:
     gr.Markdown("### 🧠 Upload a PDF and ask questions about its content")
 
@@ -210,9 +209,9 @@ with gr.Blocks() as demo:
     answer = gr.Textbox(label="Generated answer", lines=10)
     ask_btn = gr.Button("Ask")
 
-    # Event bindings
     refresh_btn.click(fn=update_dropdown, inputs=[], outputs=[doc_id_dropdown])
     upload_btn.click(fn=process_pdf_gradio, inputs=[upload], outputs=[status])
     ask_btn.click(fn=answer_question, inputs=[user_input, doc_id_dropdown], outputs=[answer])
 
-demo.launch(debug=True, share=True)
+# HF Spaces manages the server — no share=True, no debug=True
+demo.launch()
